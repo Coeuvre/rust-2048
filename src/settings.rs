@@ -1,12 +1,13 @@
-
+use serde::{Deserialize, Serialize};
+use serde_json::{from_reader, to_writer};
 use std::env::current_exe;
-use std::io::{BufWriter, BufReader, Write};
-use std::fs::{File};
+use std::fs::File;
+use std::io::{BufReader, BufWriter};
 use std::path::Path;
-use rustc_serialize::{ json, Encodable, Decodable };
 
 static SETTING_FILENAME: &'static str = "settings.json";
 
+#[derive(Serialize, Deserialize)]
 pub struct Settings {
     pub asset_folder: String,
     pub window_size: [u32; 2],
@@ -48,11 +49,7 @@ impl Settings {
         let mut tiles_colors = Vec::<[f32; 3]>::new();
 
         for color in s.tiles_colors.iter() {
-            tiles_colors.push([
-                color[0] / 255.0,
-                color[1] / 255.0,
-                color[2] / 255.0,
-            ]);
+            tiles_colors.push([color[0] / 255.0, color[1] / 255.0, color[2] / 255.0]);
         }
 
         Settings {
@@ -125,7 +122,7 @@ impl Settings {
     }
 }
 
-#[derive(RustcEncodable, RustcDecodable)]
+#[derive(Serialize, Deserialize)]
 struct SettingsInJson {
     asset_folder: String,
 
@@ -199,7 +196,7 @@ impl SettingsInJson {
             tile_move_time: 0.1,
             tile_new_time: 0.1,
             tile_combine_time: 0.1,
-            best_rect: vec![284.0, 12.0, 96.0, 48.0,],
+            best_rect: vec![284.0, 12.0, 96.0, 48.0],
             score_rect: vec![176.0, 12.0, 96.0, 48.0],
             label_color: vec![187.0, 173.0, 160.0],
             button_color: vec![142.0, 122.0, 102.0],
@@ -219,33 +216,28 @@ impl SettingsInJson {
         exe_path.pop();
         let path = exe_path.join(Path::new(SETTING_FILENAME));
 
-        // FIXME: use this if possible  (.exists() is unstable in Rust 1.0.0)
-        /*      if !path.as_path().exists() || !path.is_file() {
-                    println!("Configuration file not found. Generating a default one.");
-                    let default = SettingsInJson::default_settings();
-                    default.save();
-                    return default;
-                }
-                let file = File::open(&path).unwrap();
-                let mut reader = BufReader::new(file);
-        */
-            let file = File::open(&path);
+        let file = File::open(&path);
 
-            match file {
-                Err(e) => {
-                    println!("Configuration file can't be open ({}). Try to generate a default one.", e);
-                    let default = SettingsInJson::default_settings();
-                    default.save();
-                    return default;
-                },
-                _ => {}
+        match file {
+            Err(e) => {
+                println!(
+                    "Configuration file can't be open ({}). Try to generate a default one.",
+                    e
+                );
+                let default = SettingsInJson::default_settings();
+                default.save();
+                return default;
             }
-
-            let mut reader = BufReader::new(file.unwrap());
-        // End FIXME
-
-        let mut decoder = json::Decoder::new(json::Json::from_reader(&mut reader).unwrap());
-        Decodable::decode(&mut decoder).unwrap()
+            Ok(file) => {
+                let reader = BufReader::new(file);
+                serde_json::from_reader(reader).unwrap_or_else(|_| {
+                    println!("Failed to parse settings, using default.");
+                    let default = SettingsInJson::default_settings();
+                    default.save();
+                    default
+                })
+            }
+        }
     }
 
     pub fn save(&self) {
@@ -256,19 +248,12 @@ impl SettingsInJson {
             return;
         }
 
-        let path = exe_path.unwrap();
-        let file = File::create(&path.with_file_name(SETTING_FILENAME)).unwrap();
-        let mut writer = BufWriter::new(file);
+        let path = exe_path.unwrap().with_file_name(SETTING_FILENAME);
+        let file = File::create(&path).unwrap();
+        let writer = BufWriter::new(file);
 
-        match json::encode(self) {
-            Ok(encoded) => {
-                if let Err(e) = writer.write(encoded.as_bytes()) {
-                    println!("WARNING: Failed to save settings: {}", e);
-                }
-            },
-            Err(e) => {
-                println!("WARNING: Failed to save settings: {}", e);
-            }
+        if let Err(e) = serde_json::to_writer(writer, self) {
+            println!("WARNING: Failed to save settings: {}", e);
         }
     }
 }
